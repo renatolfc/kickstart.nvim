@@ -90,10 +90,20 @@ P.S. You can delete this when you're done too. It's your config now! :)
 vim.g.mapleader = '\\'
 vim.g.maplocalleader = '\\'
 
+vim.g.nofixedeol = true
+vim.g.nofixedendofline = true
+
+-- Auto cwd based on the current file
+vim.o.autochdir = false
+
 -- Set to true if you have a Nerd Font installed and selected in the terminal
 vim.g.have_nerd_font = true
 
-vim.g.python3_host_prog = 'py.exe'
+if vim.fn.has 'win32' == 1 or vim.fn.executable 'make' == 0 then
+  vim.g.python3_host_prog = 'py.exe'
+else
+  vim.g.python3_host_prog = 'python'
+end
 
 -- [[ Setting options ]]
 -- See `:help vim.opt`
@@ -112,13 +122,30 @@ vim.opt.mouse = 'a'
 -- Don't show the mode, since it's already in the status line
 vim.opt.showmode = false
 
--- -- Sync clipboard between OS and Neovim.
--- --  Schedule the setting after `UiEnter` because it can increase startup-time.
--- --  Remove this option if you want your OS clipboard to remain independent.
--- --  See `:help 'clipboard'`
--- vim.schedule(function()
---   vim.opt.clipboard = 'unnamedplus'
--- end)
+vim.opt.tabstop = 4
+vim.opt.shiftwidth = 4
+
+-- Sync clipboard between OS and Neovim via OSC 52.
+--  Copy is sent out over OSC 52 (works locally in WezTerm, inside tmux, and over
+--  SSH — and is portable to any OSC 52-capable terminal on Linux).
+--  Paste deliberately reads the local register instead of querying the terminal:
+--  tmux/WezTerm don't answer OSC 52 *read* queries, so the built-in osc52 paste
+--  would block up to ~10s on every paste. To paste external clipboard content
+--  into nvim, use the terminal's paste (WezTerm: Ctrl+Shift+V).
+local osc52 = require 'vim.ui.clipboard.osc52'
+local function paste_from_reg()
+  return { vim.fn.getreg('"', 1, true), vim.fn.getregtype '"' }
+end
+vim.g.clipboard = {
+  name = 'OSC 52',
+  copy = { ['+'] = osc52.copy '+', ['*'] = osc52.copy '*' },
+  paste = { ['+'] = paste_from_reg, ['*'] = paste_from_reg },
+}
+-- Schedule the setting after `UiEnter` because it can increase startup-time.
+--  See `:help 'clipboard'`
+vim.schedule(function()
+  vim.opt.clipboard = 'unnamedplus'
+end)
 vim.keymap.set('v', '<C-c>', '"+y')
 
 -- Enable break indent
@@ -219,6 +246,54 @@ vim.api.nvim_create_autocmd('TextYankPost', {
   end,
 })
 
+vim.api.nvim_create_user_command('CopilotCodeReview', function()
+  local chat = require 'CopilotChat'
+
+  chat.reset() -- Reset previous chat state
+
+  chat.ask('/review', {
+    callback = function(response)
+      local function accept_code_review()
+        vim.keymap.del('n', '<c-]>', { buffer = true })
+
+        chat.close()
+
+        vim.api.nvim_win_close(0, false)
+        vim.cmd 'vertical Git'
+        vim.cmd 'Git commit'
+      end
+
+      vim.keymap.set('n', '<c-]>', accept_code_review, { buffer = true })
+      return response
+    end,
+    model = vim.fn.getenv 'COPILOT_MODEL_REASON',
+    sticky = { '#gitdiff:staged' },
+    system_prompt = '/COPILOT_REVIEW',
+    window = {
+      layout = 'replace',
+    },
+  })
+end, {})
+
+local prompts = {
+  -- Code related prompts
+  Explain = 'Please explain how the following code works.',
+  Review = 'Please review the following code and provide suggestions for improvement.',
+  Tests = 'Please explain how the selected code works, then generate unit tests for it.',
+  Refactor = 'Please refactor the following code to improve its clarity and readability.',
+  FixCode = 'Please fix the following code to make it work as intended.',
+  FixError = 'Please explain the error in the following text and provide a solution.',
+  BetterNamings = 'Please provide better names for the following variables and functions.',
+  Documentation = 'Please provide documentation for the following code.',
+  SwaggerApiDocs = 'Please provide documentation for the following API using Swagger.',
+  SwaggerJsDocs = 'Please write JSDoc for the following API using Swagger.',
+  -- Text related prompts
+  Summarize = 'Please summarize the following text.',
+  Spelling = 'Please correct any grammar and spelling errors in the following text.',
+  Wording = 'Please improve the grammar and wording of the following text.',
+  Concise = 'Please rewrite the following text to make it more concise.',
+}
+
 -- [[ Install `lazy.nvim` plugin manager ]]
 --    See `:help lazy.nvim.txt` or https://github.com/folke/lazy.nvim for more info
 local lazypath = vim.fn.stdpath 'data' .. '/lazy/lazy.nvim'
@@ -245,6 +320,120 @@ vim.opt.rtp:prepend(lazypath)
 require('lazy').setup({
   -- NOTE: Plugins can be added with a link (or for a github repo: 'owner/repo' link).
   'tpope/vim-sleuth', -- Detect tabstop and shiftwidth automatically
+  'github/copilot.vim', -- copilot
+  'tpope/vim-fugitive', -- Git commands in nvim
+  'MeanderingProgrammer/render-markdown.nvim',
+
+  {
+    'georgeguimaraes/review.nvim',
+    version = 'v*',
+    dependencies = {
+      'esmuellert/codediff.nvim',
+      'MunifTanjim/nui.nvim',
+    },
+    cmd = { 'Review' },
+    keys = {
+      { '<leader>r', '<cmd>Review<cr>', desc = 'Review' },
+      { '<leader>R', '<cmd>Review commits<cr>', desc = 'Review commits' },
+    },
+    opts = {},
+  },
+
+  {
+    'folke/sidekick.nvim',
+    opts = {
+      -- add any options here
+      cli = {
+        mux = {
+          backend = 'tmux',
+          enabled = true,
+        },
+      },
+    },
+    keys = {
+      {
+        '<tab>',
+        function()
+          -- if there is a next edit, jump to it, otherwise apply it if any
+          if not require('sidekick').nes_jump_or_apply() then
+            return '<Tab>' -- fallback to normal tab
+          end
+        end,
+        expr = true,
+        desc = 'Goto/Apply Next Edit Suggestion',
+      },
+      {
+        '<c-.>',
+        function()
+          require('sidekick.cli').focus()
+        end,
+        desc = 'Sidekick Focus',
+        mode = { 'n', 't', 'i', 'x' },
+      },
+      {
+        '<leader>aa',
+        function()
+          require('sidekick.cli').toggle()
+        end,
+        desc = 'Sidekick Toggle CLI',
+      },
+      {
+        '<leader>as',
+        function()
+          require('sidekick.cli').select()
+        end,
+        -- Or to select only installed tools:
+        -- require("sidekick.cli").select({ filter = { installed = true } })
+        desc = 'Select CLI',
+      },
+      {
+        '<leader>ad',
+        function()
+          require('sidekick.cli').close()
+        end,
+        desc = 'Detach a CLI Session',
+      },
+      {
+        '<leader>at',
+        function()
+          require('sidekick.cli').send { msg = '{this}' }
+        end,
+        mode = { 'x', 'n' },
+        desc = 'Send This',
+      },
+      {
+        '<leader>af',
+        function()
+          require('sidekick.cli').send { msg = '{file}' }
+        end,
+        desc = 'Send File',
+      },
+      {
+        '<leader>av',
+        function()
+          require('sidekick.cli').send { msg = '{selection}' }
+        end,
+        mode = { 'x' },
+        desc = 'Send Visual Selection',
+      },
+      {
+        '<leader>ap',
+        function()
+          require('sidekick.cli').prompt()
+        end,
+        mode = { 'n', 'x' },
+        desc = 'Sidekick Select Prompt',
+      },
+      -- Example of a keybinding to open Claude directly
+      {
+        '<leader>ac',
+        function()
+          require('sidekick.cli').toggle { name = 'copilot', focus = true }
+        end,
+        desc = 'Sidekick Toggle Copilot',
+      },
+    },
+  },
 
   -- NOTE: Plugins can also be added by using a table,
   -- with the first argument being the link and the following
@@ -269,6 +458,27 @@ require('lazy').setup({
         changedelete = { text = '~' },
       },
     },
+  },
+
+  {
+    'MeanderingProgrammer/render-markdown.nvim',
+    optional = true,
+    opts = {
+      file_types = { 'markdown', 'copilot-chat' },
+    },
+    ft = { 'markdown', 'copilot-chat' },
+  },
+
+  {
+    'CopilotC-Nvim/CopilotChat.nvim',
+    dependencies = {
+      { 'nvim-lua/plenary.nvim', branch = 'master' }, -- for curl, log and async functions
+    },
+    build = 'make tiktoken',
+    opts = {
+      -- See Configuration section for options
+    },
+    -- See Commands section for default commands if you want to lazy load on them
   },
 
   -- NOTE: Plugins can also be configured to run Lua code when they are loaded.
@@ -315,7 +525,8 @@ require('lazy').setup({
   { -- Fuzzy Finder (files, lsp, etc)
     'nvim-telescope/telescope.nvim',
     event = 'VimEnter',
-    branch = '0.1.x',
+    --branch = '0.1.x',
+    branch = 'master',
     dependencies = {
       'nvim-lua/plenary.nvim',
       { -- If encountering errors, see telescope-fzf-native README for installation instructions
@@ -384,6 +595,7 @@ require('lazy').setup({
       vim.keymap.set('n', '<leader>sh', builtin.help_tags, { desc = '[S]earch [H]elp' })
       vim.keymap.set('n', '<leader>sk', builtin.keymaps, { desc = '[S]earch [K]eymaps' })
       vim.keymap.set('n', '<leader>sf', builtin.find_files, { desc = '[S]earch [F]iles' })
+      vim.keymap.set('n', '<C-p>', builtin.find_files, { desc = '[S]earch [F]iles' })
       vim.keymap.set('n', '<leader>ss', builtin.builtin, { desc = '[S]earch [S]elect Telescope' })
       vim.keymap.set('n', '<leader>sw', builtin.grep_string, { desc = '[S]earch current [W]ord' })
       vim.keymap.set('n', '<leader>sg', builtin.live_grep, { desc = '[S]earch by [G]rep' })
@@ -418,14 +630,14 @@ require('lazy').setup({
   },
 
   {
-    "nvim-neo-tree/neo-tree.nvim",
-    branch = "v3.x",
+    'nvim-neo-tree/neo-tree.nvim',
+    branch = 'v3.x',
     dependencies = {
-      "nvim-lua/plenary.nvim",
-      "nvim-tree/nvim-web-devicons",
-      "MunifTanjim/nui.nvim",
-      "3rd/image.nvim"
-    }
+      'nvim-lua/plenary.nvim',
+      'nvim-tree/nvim-web-devicons',
+      'MunifTanjim/nui.nvim',
+      '3rd/image.nvim',
+    },
   },
 
   -- LSP Plugins
@@ -597,7 +809,8 @@ require('lazy').setup({
       local servers = {
         -- clangd = {},
         -- gopls = {},
-        -- pyright = {},
+        pyright = {},
+        -- basedpyright = {},
         -- rust_analyzer = {},
         -- ... etc. See `:help lspconfig-all` for a list of all the pre-configured LSPs
         --
@@ -675,7 +888,7 @@ require('lazy').setup({
         -- Disable "format_on_save lsp_fallback" for languages that don't
         -- have a well standardized coding style. You can add additional
         -- languages here or re-enable it for the disabled ones.
-        local disable_filetypes = { c = true, cpp = true }
+        local disable_filetypes = { c = true, cpp = true, py = true }
         return {
           timeout_ms = 500,
           lsp_fallback = not disable_filetypes[vim.bo[bufnr].filetype],
@@ -684,7 +897,8 @@ require('lazy').setup({
       formatters_by_ft = {
         lua = { 'stylua' },
         -- Conform can also run multiple formatters sequentially
-        -- python = { "isort", "black" },
+        -- python = { 'isort', 'ruff' },
+        -- python = { 'ruff' },
         --
         -- You can use 'stop_after_first' to run the first available formatter from the list
         -- javascript = { "prettierd", "prettier", stop_after_first = true },
@@ -813,24 +1027,24 @@ require('lazy').setup({
     -- change the command in the config to whatever the name of that colorscheme is.
     --
     -- If you want to see what colorschemes are already installed, you can use `:Telescope colorscheme`.
-    'olimorris/onedarkpro.nvim',
+    'dracula/vim',
     priority = 1000, -- Make sure to load this before all the other start plugins.
     init = function()
       -- Load the colorscheme here.
       -- Like many other themes, this one has different styles, and you could load
       -- any other, such as 'tokyonight-storm', 'tokyonight-moon', or 'tokyonight-day'.
-      vim.cmd.colorscheme 'onedark'
+      vim.cmd.colorscheme 'dracula'
 
       -- You can configure highlights by doing something like:
       vim.cmd.hi 'Comment gui=none'
     end,
-    config = function()
-      require('onedarkpro').setup({
-        options = {
-          transparency = true
-        }
-      })
-    end,
+    -- config = function()
+    --   require('onedarkpro').setup {
+    --     options = {
+    --       transparency = true,
+    --     },
+    --   }
+    -- end,
   },
 
   -- Highlight todo, notes, etc in comments
@@ -893,7 +1107,7 @@ require('lazy').setup({
       -- [[ Configure Treesitter ]] See `:help nvim-treesitter`
 
       ---@diagnostic disable-next-line: missing-fields
-      require('nvim-treesitter.configs').setup(opts)
+      require('nvim-treesitter.config').setup(opts)
 
       -- There are additional nvim-treesitter modules that you can use to interact
       -- with nvim-treesitter. You should go explore a few and see what interests you:
@@ -914,18 +1128,18 @@ require('lazy').setup({
   --  Uncomment any of the lines below to enable them (you will need to restart nvim).
   --
   -- require 'kickstart.plugins.debug',
-  -- require 'kickstart.plugins.indent_line',
+  require 'kickstart.plugins.indent_line',
   -- require 'kickstart.plugins.lint',
-  -- require 'kickstart.plugins.autopairs',
-  -- require 'kickstart.plugins.neo-tree',
-  -- require 'kickstart.plugins.gitsigns', -- adds gitsigns recommend keymaps
+  require 'kickstart.plugins.autopairs',
+  require 'kickstart.plugins.neo-tree',
+  require 'kickstart.plugins.gitsigns', -- adds gitsigns recommend keymaps
 
   -- NOTE: The import below can automatically add your own plugins, configuration, etc from `lua/custom/plugins/*.lua`
   --    This is the easiest way to modularize your config.
   --
   --  Uncomment the following line and add your plugins to `lua/custom/plugins/*.lua` to get going.
   --    For additional information, see `:help lazy.nvim-lazy.nvim-structuring-your-plugins`
-  -- { import = 'custom.plugins' },
+  { import = 'custom.plugins' },
 }, {
   ui = {
     -- If you are using a Nerd Font: set icons to an empty table which will use the

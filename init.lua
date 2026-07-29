@@ -103,6 +103,7 @@ if vim.fn.has 'win32' == 1 or vim.fn.executable 'make' == 0 then
   vim.g.python3_host_prog = 'py.exe'
 else
   vim.g.python3_host_prog = 'python'
+  vim.g.python3_host_prog = '~/.venv/bin/python'
 end
 
 -- [[ Setting options ]]
@@ -525,7 +526,6 @@ require('lazy').setup({
   { -- Fuzzy Finder (files, lsp, etc)
     'nvim-telescope/telescope.nvim',
     event = 'VimEnter',
-    --branch = '0.1.x',
     branch = 'master',
     dependencies = {
       'nvim-lua/plenary.nvim',
@@ -1038,13 +1038,13 @@ require('lazy').setup({
       -- You can configure highlights by doing something like:
       vim.cmd.hi 'Comment gui=none'
     end,
-    -- config = function()
-    --   require('onedarkpro').setup {
-    --     options = {
-    --       transparency = true,
-    --     },
-    --   }
-    -- end,
+    config = function()
+      require('onedarkpro').setup {
+        options = {
+          transparency = true,
+        },
+      }
+    end,
   },
 
   -- Highlight todo, notes, etc in comments
@@ -1102,6 +1102,7 @@ require('lazy').setup({
         additional_vim_regex_highlighting = { 'ruby' },
       },
       indent = { enable = true, disable = { 'ruby' } },
+      branch = 'master',
     },
     config = function(_, opts)
       -- [[ Configure Treesitter ]] See `:help nvim-treesitter`

@@ -154,6 +154,9 @@ vim.opt.breakindent = true
 
 -- Save undo history
 vim.opt.undofile = true
+vim.opt.backupdir = vim.fn.expand '~/.vim/backup'
+vim.opt.directory = vim.fn.expand '~/.vim/swap'
+vim.opt.undodir = vim.fn.expand '~/.vim/undo'
 
 -- Case-insensitive searching UNLESS \C or one or more capital letters in the search term
 vim.opt.ignorecase = true
@@ -202,6 +205,8 @@ end
 
 vim.keymap.set('n', '<leader>ev', '<C-w><C-v><C-l>:e $MYVIMRC<cr>')
 vim.keymap.set('n', '<F2>', ':Neotree filesystem reveal<cr>')
+vim.keymap.set('n', '<leader>x', ':!chmod +x %<CR>', { desc = 'Make file executable' })
+vim.keymap.set('c', 'w!!', 'w !sudo tee % >/dev/null', { desc = 'Sudo write' })
 
 -- Clear highlights on search when pressing <Esc> in normal mode
 --  See `:help hlsearch`
@@ -232,6 +237,24 @@ vim.keymap.set('n', '<C-h>', '<C-w><C-h>', { desc = 'Move focus to the left wind
 vim.keymap.set('n', '<C-l>', '<C-w><C-l>', { desc = 'Move focus to the right window' })
 vim.keymap.set('n', '<C-j>', '<C-w><C-j>', { desc = 'Move focus to the lower window' })
 vim.keymap.set('n', '<C-k>', '<C-w><C-k>', { desc = 'Move focus to the upper window' })
+
+local function toggle_wrap()
+  if vim.wo.wrap then
+    vim.wo.wrap = false
+    vim.opt.virtualedit = 'all'
+  else
+    vim.wo.wrap = true
+    vim.wo.linebreak = true
+    vim.opt.virtualedit = ''
+    vim.wo.display = 'lastline'
+    local opts = { buffer = true, silent = true }
+    vim.keymap.set('n', 'k', 'gk', opts)
+    vim.keymap.set('n', 'j', 'gj', opts)
+    vim.keymap.set('n', '0', 'g0', opts)
+    vim.keymap.set('n', '$', 'g$', opts)
+  end
+end
+vim.keymap.set('n', '<Leader>w', toggle_wrap, { desc = 'Toggle wrap mode' })
 
 -- [[ Basic Autocommands ]]
 --  See `:help lua-guide-autocommands`
@@ -1023,27 +1046,11 @@ require('lazy').setup({
   },
 
   { -- You can easily change to a different colorscheme.
-    -- Change the name of the colorscheme plugin below, and then
-    -- change the command in the config to whatever the name of that colorscheme is.
-    --
-    -- If you want to see what colorschemes are already installed, you can use `:Telescope colorscheme`.
     'dracula/vim',
     priority = 1000, -- Make sure to load this before all the other start plugins.
     init = function()
-      -- Load the colorscheme here.
-      -- Like many other themes, this one has different styles, and you could load
-      -- any other, such as 'tokyonight-storm', 'tokyonight-moon', or 'tokyonight-day'.
       vim.cmd.colorscheme 'dracula'
-
-      -- You can configure highlights by doing something like:
       vim.cmd.hi 'Comment gui=none'
-    end,
-    config = function()
-      require('onedarkpro').setup {
-        options = {
-          transparency = true,
-        },
-      }
     end,
   },
 
